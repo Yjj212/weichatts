@@ -1,0 +1,1 @@
+"""WeChat complaint desktop helper."""
