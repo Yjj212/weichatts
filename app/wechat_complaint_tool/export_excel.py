@@ -95,9 +95,10 @@ def list_record_images_for_excel(complaint_dir: Path) -> list[Path]:
         [path for path in complaint_dir.iterdir() if path.is_file() and path.suffix.lower() == ".png"],
         key=_image_sort_key,
     )
-    if len(images) <= 1:
+    numeric_images = [path for path in images if re.match(r"^\d+$", path.stem)]
+    if len(numeric_images) <= 1:
         return []
-    return list(reversed(images[:-1]))
+    return list(reversed(numeric_images[:-1]))
 
 
 def build_export_row_from_text(text: str) -> ExportComplaintData:

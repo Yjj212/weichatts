@@ -43,7 +43,7 @@ def test_list_record_images_for_excel_excludes_order_info_png(tmp_path: Path) ->
 
     images = list_record_images_for_excel(complaint_dir)
 
-    assert [path.name for path in images] == ["003.png", "002.png", "001.png"]
+    assert [path.name for path in images] == ["002.png", "001.png"]
 
 
 def test_ocr_focus_text_from_directory_prefers_order_info_png(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
