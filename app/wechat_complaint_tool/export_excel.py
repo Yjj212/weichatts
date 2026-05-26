@@ -32,6 +32,10 @@ IMAGE_EXT_CY = "7200900"
 HEADER_LABELS = [
     "交易单号",
     "商户单号",
+    "交易金额",
+    "交易时间",
+    "咨询时间",
+    "问题描述",
     "退款情况",
     "投诉时间",
     "处理时间",
@@ -53,6 +57,10 @@ ET.register_namespace("xdr", XDR_NS)
 class ExportComplaintData:
     transaction_id: str = ""
     merchant_order_id: str = ""
+    transaction_amount: str = ""
+    transaction_time: str = ""
+    inquiry_time: str = ""
+    problem_description: str = ""
     refund_summary: str = "未退款"
     refund_status: str = "未退款"
     complaint_dir: Path | None = None
@@ -95,10 +103,18 @@ def list_record_images_for_excel(complaint_dir: Path) -> list[Path]:
 def build_export_row_from_text(text: str) -> ExportComplaintData:
     transaction_id = _extract_transaction_id(text)
     merchant_order_id = _extract_merchant_order_id(text)
+    transaction_amount = _extract_transaction_amount(text)
+    transaction_time = _extract_transaction_time(text)
+    inquiry_time = _extract_inquiry_time(text)
+    problem_description = _extract_problem_description(text)
     refund_summary, refund_status = _detect_refund_status(text)
     return ExportComplaintData(
         transaction_id=transaction_id,
         merchant_order_id=merchant_order_id,
+        transaction_amount=transaction_amount,
+        transaction_time=transaction_time,
+        inquiry_time=inquiry_time,
+        problem_description=problem_description,
         refund_summary=refund_summary,
         refund_status=refund_status,
     )
@@ -117,10 +133,18 @@ def collect_export_rows_from_run(run_dir: Path, ocr_engine: RapidOCR | None = No
         focus_text = _ocr_focus_text_from_directory(complaint_dir, engine)
         if focus_text:
             focused_row = build_export_row_from_text(focus_text)
-            if focused_row.transaction_id:
+            if _is_better_transaction_id(focused_row.transaction_id, row.transaction_id):
                 row.transaction_id = focused_row.transaction_id
-            if focused_row.merchant_order_id:
+            if _is_better_merchant_order_id(focused_row.merchant_order_id, row.merchant_order_id):
                 row.merchant_order_id = focused_row.merchant_order_id
+            if _is_preferable_text_value(focused_row.transaction_amount, row.transaction_amount):
+                row.transaction_amount = focused_row.transaction_amount
+            if _is_preferable_text_value(focused_row.transaction_time, row.transaction_time):
+                row.transaction_time = focused_row.transaction_time
+            if _is_preferable_text_value(focused_row.inquiry_time, row.inquiry_time):
+                row.inquiry_time = focused_row.inquiry_time
+            if _is_preferable_text_value(focused_row.problem_description, row.problem_description):
+                row.problem_description = focused_row.problem_description
         rows.append(replace(row, complaint_dir=complaint_dir))
     return rows
 
@@ -181,12 +205,16 @@ def _write_workbook_body(
     for index, row in enumerate(rows, start=2):
         sheet.cell(index, 1, row.transaction_id)
         sheet.cell(index, 2, row.merchant_order_id)
-        sheet.cell(index, 3, row.refund_summary)
-        sheet.cell(index, 4, None)
-        sheet.cell(index, 5, None)
-        sheet.cell(index, 6, row.refund_status)
-        sheet.cell(index, 7, None)
+        sheet.cell(index, 3, row.transaction_amount)
+        sheet.cell(index, 4, row.transaction_time)
+        sheet.cell(index, 5, row.inquiry_time)
+        sheet.cell(index, 6, row.problem_description)
+        sheet.cell(index, 7, row.refund_summary)
         sheet.cell(index, 8, None)
+        sheet.cell(index, 9, None)
+        sheet.cell(index, 10, row.refund_status)
+        sheet.cell(index, 11, None)
+        sheet.cell(index, 12, None)
         sheet.row_dimensions[index].height = DEFAULT_ROW_HEIGHT
 
     workbook.save(output_path)
@@ -230,24 +258,28 @@ def _write_headers(sheet, image_column_count: int) -> None:
     for column_index, label in enumerate(HEADER_LABELS, start=1):
         sheet.cell(1, column_index, label)
     for offset in range(image_column_count):
-        sheet.cell(1, 9 + offset, RECORD_HEADER)
+        sheet.cell(1, 13 + offset, RECORD_HEADER)
 
 
 def _apply_column_widths(sheet, image_column_count: int) -> None:
     base_widths = {
         "A": 32.11,
         "B": 18.67,
-        "C": 8.33,
-        "D": 20.89,
-        "E": 19.78,
-        "F": 20.33,
-        "G": 24.11,
-        "H": 18.33,
+        "C": 10.0,
+        "D": 20.0,
+        "E": 20.0,
+        "F": 30.0,
+        "G": 8.33,
+        "H": 20.89,
+        "I": 19.78,
+        "J": 20.33,
+        "K": 24.11,
+        "L": 18.33,
     }
     for column, width in base_widths.items():
         sheet.column_dimensions[column].width = width
     for offset in range(image_column_count):
-        sheet.column_dimensions[get_column_letter(9 + offset)].width = 10.0
+        sheet.column_dimensions[get_column_letter(13 + offset)].width = 10.0
 
 
 def _copy_media_and_build_entries(rows: list[ExportComplaintData], media_dir: Path) -> list[_CellImageEntry]:
@@ -258,7 +290,7 @@ def _copy_media_and_build_entries(rows: list[ExportComplaintData], media_dir: Pa
             continue
         record_images = list_record_images_for_excel(row.complaint_dir)
         for column_offset, image_path in enumerate(record_images):
-            cell_ref = f"{get_column_letter(9 + column_offset)}{row_index}"
+            cell_ref = f"{get_column_letter(13 + column_offset)}{row_index}"
             media_name = f"image{media_index}.png"
             shutil.copyfile(image_path, media_dir / media_name)
             entries.append(
@@ -398,7 +430,7 @@ def _update_sheet_xml(
         existing_cells = row_node.findall(f"{{{SHEET_NS}}}c")
         cell_by_ref = {cell.get("r", ""): cell for cell in existing_cells}
         for column_offset in range(image_column_count):
-            cell_ref = f"{get_column_letter(9 + column_offset)}{row_index}"
+            cell_ref = f"{get_column_letter(13 + column_offset)}{row_index}"
             cell = cell_by_ref.get(cell_ref)
             if cell is None:
                 cell = ET.SubElement(row_node, f"{{{SHEET_NS}}}c", {"r": cell_ref})
@@ -422,7 +454,7 @@ def _update_sheet_xml(
 
     _sort_sheet_rows(sheet_data)
 
-    last_column_index = 8 + image_column_count
+    last_column_index = 12 + image_column_count
     last_row_index = max(len(rows) + 1, 1)
     dimension = root.find(f"{{{SHEET_NS}}}dimension")
     if dimension is None:
@@ -553,6 +585,117 @@ def _extract_merchant_order_id(text: str) -> str:
     phone_numbers = set(re.findall(r"1\d{10}", text))
     candidates = [candidate for candidate in candidates if candidate not in phone_numbers]
     return candidates[0] if candidates else ""
+
+
+def _is_better_transaction_id(candidate: str, current: str) -> bool:
+    if not candidate:
+        return False
+    if not current:
+        return candidate.startswith("42") and len(candidate) >= 20
+    return candidate.startswith("42") and len(candidate) >= len(current)
+
+
+def _is_better_merchant_order_id(candidate: str, current: str) -> bool:
+    if not candidate:
+        return False
+    if candidate == "4006211990":
+        return False
+    if not current:
+        return len(candidate) >= 12
+    if current == "4006211990":
+        return len(candidate) >= 12
+    return len(candidate) >= len(current)
+
+
+def _is_preferable_text_value(candidate: str, current: str) -> bool:
+    if not candidate:
+        return False
+    if not current:
+        return True
+    return len(candidate) >= len(current)
+
+
+def _extract_transaction_amount(text: str) -> str:
+    patterns = [
+        r"(?:交易金额|订单金额|支付金额)[^\d¥￥]*[¥￥]?\s*([\d.]+)",
+        r"[¥￥]\s*([\d.]+)",
+        r"([\d.]+)\s*元",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _extract_transaction_time(text: str) -> str:
+    patterns = [
+        r"(?:交易时间|支付时间|下单时间)[^\d]*?(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?\s*\d{1,2}:\d{2}(?::\d{2})?)",
+        r"(\d{4}[-/]\d{2}[-/]\d{2}\s+\d{2}:\d{2}:\d{2})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            time_str = match.group(1)
+            time_str = time_str.replace("年", "-").replace("月", "-").replace("日", "")
+            return time_str
+    return ""
+
+
+def _extract_inquiry_time(text: str) -> str:
+    patterns = [
+        r"(?:咨询时间|投诉时间)[^\d]*?(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?\s*\d{1,2}:\d{2}(?::\d{2})?)",
+        r"咨询时间[^\d]*?(\d{4}[-/]\d{2}[-/]\d{2}\s+\d{2}:\d{2}:\d{2})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            time_str = match.group(1)
+            time_str = time_str.replace("年", "-").replace("月", "-").replace("日", "")
+            return time_str
+    return ""
+
+
+def _extract_problem_description(text: str) -> str:
+    patterns = [
+        r"(?:问题描述|投诉原因|投诉内容)[：:\s]+\s*([^\n]{2,200})",
+        r"用户(?:反馈|投诉|表示)[：:\s]+\s*([^\n]{2,200})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            description = match.group(1).strip()
+            if len(description) > 100:
+                description = description[:100] + "..."
+            return description
+
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if any(keyword in line for keyword in ["问题描述", "投诉原因", "投诉内容"]):
+            parts = re.split(r"[：:\s]+", line, maxsplit=1)
+            if len(parts) > 1 and parts[1].strip():
+                description = parts[1].strip()
+                if len(description) > 100:
+                    description = description[:100] + "..."
+                return description
+            if i + 1 < len(lines):
+                description = lines[i + 1].strip()
+                if len(description) > 100:
+                    description = description[:100] + "..."
+                return description
+        if "咨询原因" in line:
+            parts = re.split(r"[：:\s]+", line, maxsplit=1)
+            if len(parts) > 1 and parts[1].strip() and parts[1].strip() != "咨询原因":
+                description = parts[1].strip()
+                if len(description) > 100:
+                    description = description[:100] + "..."
+                return description
+            if i + 1 < len(lines):
+                description = lines[i + 1].strip()
+                if len(description) > 100:
+                    description = description[:100] + "..."
+                return description
+    return ""
 
 
 def _extract_labeled_digits(text: str, labels: list[str]) -> str:
