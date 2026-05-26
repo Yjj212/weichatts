@@ -18,6 +18,9 @@ DEFAULT_MINIMUM_NEW_CONTENT_HEIGHT = 24
 DEFAULT_PIXEL_TOLERANCE = 2
 DEFAULT_HORIZONTAL_MARGIN_RATIO = 0.12
 DEFAULT_LIST_OVERLAP_THRESHOLD = 0.985
+DEFAULT_ORDER_INFO_MAX_SCROLLS = 24
+DEFAULT_ORDER_INFO_HEIGHT_RATIO = 0.55
+ORDER_INFO_FILE_NAME = "order_info.png"
 
 
 @dataclass(slots=True)
@@ -25,6 +28,7 @@ class SegmentCaptureResult:
     output_dir: Path
     image_paths: list[Path]
     segment_count: int
+    order_info_path: Path | None = None
 
 
 @dataclass(slots=True)
@@ -74,6 +78,7 @@ class ScreenCaptureService:
         image_paths = [self.save_image(first_frame, destination_dir / build_segment_file_name(1))]
 
         previous_full_frame = first_frame
+        latest_visible_frame = first_frame
         stagnation_count = 0
 
         for _ in range(max(max_scrolls - 1, 0)):
@@ -84,6 +89,7 @@ class ScreenCaptureService:
             if self._is_same_frame(np.asarray(previous_full_frame), np.asarray(current_full_frame)):
                 break
 
+            latest_visible_frame = current_full_frame
             cropped_frame, _ = crop_bottom_overlap(
                 previous=previous_full_frame,
                 current=current_full_frame,
@@ -104,10 +110,18 @@ class ScreenCaptureService:
             )
             previous_full_frame = current_full_frame
 
+        order_info_frame = self.capture_order_info_frame(
+            rect=rect,
+            initial_frame=latest_visible_frame,
+            scroll_clicks=config.chat_scroll_clicks,
+            settle_ms=config.scroll_settle_ms,
+        )
+        order_info_path = self.save_image(crop_order_info_frame(order_info_frame), destination_dir / ORDER_INFO_FILE_NAME)
         return SegmentCaptureResult(
             output_dir=destination_dir,
             image_paths=image_paths,
             segment_count=len(image_paths),
+            order_info_path=order_info_path,
         )
 
     @staticmethod
@@ -127,6 +141,24 @@ class ScreenCaptureService:
     @staticmethod
     def click_point(point: tuple[int, int]) -> None:
         pyautogui.click(point[0], point[1])
+
+    def capture_order_info_frame(
+        self,
+        rect: Rect,
+        initial_frame: Image.Image,
+        scroll_clicks: int,
+        settle_ms: int,
+        max_scrolls: int = DEFAULT_ORDER_INFO_MAX_SCROLLS,
+    ) -> Image.Image:
+        topmost_frame = initial_frame
+        for _ in range(max_scrolls):
+            self.scroll_chat_region(rect, clicks=scroll_clicks)
+            wait_for_ui_settle(settle_ms)
+            current_frame = self.capture_rect_image(rect)
+            if self._is_same_frame(np.asarray(topmost_frame), np.asarray(current_frame)):
+                break
+            topmost_frame = current_frame
+        return topmost_frame
 
     @staticmethod
     def _is_same_frame(previous: np.ndarray, current: np.ndarray) -> bool:
@@ -167,6 +199,13 @@ def build_segment_file_name(index: int) -> str:
 
 def has_meaningful_new_content(image: Image.Image, minimum_height: int = DEFAULT_MINIMUM_NEW_CONTENT_HEIGHT) -> bool:
     return image.height >= minimum_height
+
+
+def crop_order_info_frame(image: Image.Image, height_ratio: float = DEFAULT_ORDER_INFO_HEIGHT_RATIO) -> Image.Image:
+    if image.height <= 0:
+        return image
+    crop_height = max(1, min(image.height, int(round(image.height * height_ratio))))
+    return image.crop((0, 0, image.width, crop_height))
 
 
 def detect_list_page_overlap(
