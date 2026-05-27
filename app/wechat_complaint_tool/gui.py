@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from .automation import AutomationCallbacks, BatchAutomationRunner
 from .calibration import RegionSelector
 from .capture import ScreenCaptureService, validate_capture_prerequisites
-from .config import AppConfig, Rect, load_config, save_config
+from .config import AppConfig, DEFAULT_ENABLED_EXPORT_FIELDS, Rect, load_config, save_config
 from .export_excel import export_latest_run_with_fixed_template
 from .ocr_service import OCRService
 
@@ -37,6 +37,16 @@ class AppView:
         self.progress_var = tk.StringVar(value="已完成 0，失败 0")
         self.current_item_var = tk.StringVar(value="当前投诉：无")
         self.excel_output_var = tk.StringVar(value="表格输出：未生成")
+        self.export_field_vars: dict[str, tk.BooleanVar] = {
+            field_name: tk.BooleanVar(value=field_name in (self.config.enabled_export_fields or DEFAULT_ENABLED_EXPORT_FIELDS))
+            for field_name in [
+                "transaction_amount",
+                "transaction_time",
+                "consultation_reason",
+                "inquiry_time",
+                "problem_description",
+            ]
+        }
 
         self.window_region_var = tk.StringVar(value=self._format_rect(self.config.wechat_window_rect))
         self.list_region_var = tk.StringVar(value=self._format_rect(self.config.list_region))
@@ -52,7 +62,7 @@ class AppView:
         frame = ttk.Frame(self.root, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(5, weight=1)
+        frame.rowconfigure(6, weight=1)
 
         ttk.Label(frame, text="微信窗口标题关键字").grid(row=0, column=0, sticky="w", pady=6)
         ttk.Entry(frame, textvariable=self.window_title_var).grid(row=0, column=1, sticky="ew", pady=6)
@@ -83,8 +93,28 @@ class AppView:
         self._add_region_row(region_frame, 1, "左侧投诉列表", self.list_region_var)
         self._add_region_row(region_frame, 2, "右侧完整内容", self.content_region_var)
 
+        export_frame = ttk.LabelFrame(frame, text="表格字段抓取", padding=12)
+        export_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        for column in range(5):
+            export_frame.columnconfigure(column, weight=1)
+        for column, (field_name, label) in enumerate(
+            [
+                ("transaction_amount", "交易金额"),
+                ("transaction_time", "交易时间"),
+                ("consultation_reason", "咨询原因"),
+                ("inquiry_time", "咨询时间"),
+                ("problem_description", "问题描述"),
+            ]
+        ):
+            ttk.Checkbutton(export_frame, text=label, variable=self.export_field_vars[field_name]).grid(
+                row=0,
+                column=column,
+                sticky="w",
+                padx=4,
+            )
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        buttons.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         for column in range(6):
             buttons.columnconfigure(column, weight=1)
 
@@ -96,7 +126,7 @@ class AppView:
         ttk.Button(buttons, text="按最新采集结果生成表格", command=self._export_latest_run).grid(row=0, column=5, sticky="ew", padx=4)
 
         stop_row = ttk.Frame(frame)
-        stop_row.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=(12, 0))
+        stop_row.grid(row=6, column=0, columnspan=3, sticky="nsew", pady=(12, 0))
         stop_row.columnconfigure(0, weight=1)
         stop_row.rowconfigure(1, weight=1)
         ttk.Button(stop_row, text="停止本次采集", command=self._stop_batch).grid(row=0, column=0, sticky="ew")
@@ -186,7 +216,12 @@ class AppView:
                 return
 
             try:
-                excel_path = export_latest_run_with_fixed_template(self.base_dir, self._resolve_output_dir(), ocr_engine=self.ocr_service.engine)
+                excel_path = export_latest_run_with_fixed_template(
+                    self.base_dir,
+                    self._resolve_output_dir(),
+                    ocr_engine=self.ocr_service.engine,
+                    enabled_export_fields=self.config.enabled_export_fields,
+                )
                 self.root.after(0, lambda: self.excel_output_var.set(f"表格输出：{excel_path}"))
             except Exception as exc:  # noqa: BLE001
                 self.root.after(0, lambda: self.excel_output_var.set(f"表格输出失败：{exc}"))
@@ -202,7 +237,12 @@ class AppView:
 
         def worker() -> None:
             try:
-                excel_path = export_latest_run_with_fixed_template(self.base_dir, self._resolve_output_dir(), ocr_engine=self.ocr_service.engine)
+                excel_path = export_latest_run_with_fixed_template(
+                    self.base_dir,
+                    self._resolve_output_dir(),
+                    ocr_engine=self.ocr_service.engine,
+                    enabled_export_fields=self.config.enabled_export_fields,
+                )
             except Exception as exc:  # noqa: BLE001
                 self.root.after(0, lambda: messagebox.showerror("生成表格失败", str(exc)))
                 self.root.after(0, lambda: self._set_status(f"生成表格失败：{exc}"))
@@ -270,6 +310,11 @@ class AppView:
             chat_scroll_clicks=chat_scroll_clicks,
             list_page_scroll_ratio=page_ratio,
             capture_overlap_threshold=overlap,
+            enabled_export_fields={
+                field_name
+                for field_name, variable in self.export_field_vars.items()
+                if variable.get()
+            },
         )
 
     def _resolve_output_dir(self) -> Path:

@@ -11,6 +11,8 @@ def test_load_default_config_when_missing(tmp_path: Path) -> None:
     assert config.list_region is None
     assert config.content_region is None
     assert config.chat_scroll_clicks == 2
+    assert "transaction_amount" in config.enabled_export_fields
+    assert "problem_description" in config.enabled_export_fields
 
 
 def test_save_and_load_round_trip(tmp_path: Path) -> None:
@@ -23,6 +25,7 @@ def test_save_and_load_round_trip(tmp_path: Path) -> None:
         scroll_settle_ms=1200,
         list_page_scroll_ratio=0.85,
         capture_overlap_threshold=0.97,
+        enabled_export_fields={"transaction_amount", "problem_description"},
     )
 
     save_config(tmp_path, original)
@@ -50,3 +53,20 @@ def test_load_config_gracefully_handles_legacy_shape(tmp_path: Path) -> None:
     assert config.list_region == Rect(1, 2, 3, 4)
     assert config.content_region == Rect(5, 6, 7, 8)
     assert config.scroll_settle_ms == 900
+    assert "consultation_reason" in config.enabled_export_fields
+
+
+def test_load_config_treats_null_enabled_export_fields_as_default(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(
+        """
+        {
+          "enabled_export_fields": null
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_config(tmp_path)
+
+    assert "transaction_time" in config.enabled_export_fields
+    assert "consultation_reason" in config.enabled_export_fields

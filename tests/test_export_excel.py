@@ -68,6 +68,7 @@ def test_build_export_row_extracts_trade_ids_full_refund_and_new_fields() -> Non
     商户单号 5921703241260428
     交易金额 ¥68.00
     交易时间 2026/04/20 21:46:46
+    咨询原因 其他问题
     咨询时间 2026/04/20 21:56:39
     问题描述 支付点错了，开年费，点成月费了
     已发起退款 已退款至用户账户
@@ -80,6 +81,7 @@ def test_build_export_row_extracts_trade_ids_full_refund_and_new_fields() -> Non
     assert row.merchant_order_id == "5921703241260428"
     assert row.transaction_amount == "68.00"
     assert row.transaction_time == "2026/04/20 21:46:46"
+    assert row.consultation_reason == "其他问题"
     assert row.inquiry_time == "2026/04/20 21:56:39"
     assert row.problem_description == "支付点错了，开年费，点成月费了"
     assert row.refund_status == "全额退款（原路返回）"
@@ -107,7 +109,55 @@ def test_build_export_row_extracts_amount_and_consult_reason_from_realistic_focu
     row = build_export_row_from_text(text)
 
     assert row.transaction_amount == "68.00"
-    assert row.problem_description == "其他问题"
+    assert row.consultation_reason == "其他问题"
+    assert row.problem_description == ""
+
+
+def test_build_export_row_extracts_multiline_problem_description_until_next_label() -> None:
+    text = """
+    问题描述
+    第一行用户描述
+    第二行继续说明
+    第三行补充原因
+    咨询时间
+    2026/04/20 21:56:39
+    """
+
+    row = build_export_row_from_text(text)
+
+    assert row.problem_description == "第一行用户描述\n第二行继续说明\n第三行补充原因"
+
+
+def test_build_export_row_extracts_labeled_values_without_separator() -> None:
+    text = """
+    咨询原因其他问题
+    问题描述第一行用户描述
+    第二行继续说明
+    交易金额¥68.00
+    """
+
+    row = build_export_row_from_text(text)
+
+    assert row.consultation_reason == "其他问题"
+    assert row.problem_description == "第一行用户描述\n第二行继续说明"
+
+
+def test_build_export_row_respects_enabled_optional_fields() -> None:
+    text = """
+    交易金额 ¥68.00
+    交易时间 2026/04/20 21:46:46
+    咨询原因 其他问题
+    咨询时间 2026/04/20 21:56:39
+    问题描述 需要退款
+    """
+
+    row = build_export_row_from_text(text, enabled_export_fields={"transaction_amount", "problem_description"})
+
+    assert row.transaction_amount == "68.00"
+    assert row.transaction_time == ""
+    assert row.consultation_reason == ""
+    assert row.inquiry_time == ""
+    assert row.problem_description == "需要退款"
 
 
 def test_build_export_row_defaults_to_unrefunded_when_refund_text_missing() -> None:
@@ -149,6 +199,7 @@ def test_collect_export_rows_prefers_focus_text_for_ids_and_extra_fields(monkeyp
             "商户单号 5727532625260420\n"
             "交易金额 ¥68.00\n"
             "交易时间 2026/04/20 21:46:46\n"
+            "咨询原因 其他问题\n"
             "咨询时间 2026/04/20 21:56:39\n"
             "问题描述 支付点错了，开年费，点成月费了"
         ),
@@ -161,6 +212,7 @@ def test_collect_export_rows_prefers_focus_text_for_ids_and_extra_fields(monkeyp
     assert rows[0].merchant_order_id == "5727532625260420"
     assert rows[0].transaction_amount == "68.00"
     assert rows[0].transaction_time == "2026/04/20 21:46:46"
+    assert rows[0].consultation_reason == "其他问题"
     assert rows[0].inquiry_time == "2026/04/20 21:56:39"
     assert rows[0].problem_description == "支付点错了，开年费，点成月费了"
     assert rows[0].refund_status == "全额退款（原路返回）"
@@ -178,8 +230,10 @@ def test_collect_export_rows_keeps_best_available_values_when_focus_text_is_inco
         "wechat_complaint_tool.export_excel._ocr_directory_text",
         lambda complaint_dir, engine: (
             "商户单号 5591845407260415\n"
+            "咨询原因 退款问题\n"
             "咨询时间 2026/04/15 21:08:29\n"
             "问题描述 退款充值不了会员，请退款\n"
+            "已经联系商户仍未处理\n"
             "交易金额 ￥59.98\n"
             "交易时间 2026/04/15 21:05:25"
         ),
@@ -196,8 +250,9 @@ def test_collect_export_rows_keeps_best_available_values_when_focus_text_is_inco
     assert rows[0].merchant_order_id == "5591845407260415"
     assert rows[0].transaction_amount == "59.98"
     assert rows[0].transaction_time == "2026/04/15 21:05:25"
+    assert rows[0].consultation_reason == "退款问题"
     assert rows[0].inquiry_time == "2026/04/15 21:08:29"
-    assert rows[0].problem_description == "退款充值不了会员，请退款"
+    assert rows[0].problem_description == "退款充值不了会员，请退款\n已经联系商户仍未处理"
 
 
 def test_export_latest_run_to_workbook_writes_cell_images_format_and_new_columns(tmp_path: Path) -> None:
@@ -230,6 +285,7 @@ def test_export_latest_run_to_workbook_writes_cell_images_format_and_new_columns
                 merchant_order_id="5921703241260428",
                 transaction_amount="68.00",
                 transaction_time="2026/04/20 21:46:46",
+                consultation_reason="其他问题",
                 inquiry_time="2026/04/20 21:56:39",
                 problem_description="支付点错了，开年费，点成月费了",
                 refund_summary="全额退款",
@@ -246,10 +302,11 @@ def test_export_latest_run_to_workbook_writes_cell_images_format_and_new_columns
     assert sheet["B2"].value == "5921703241260428"
     assert sheet["C2"].value == "68.00"
     assert sheet["D2"].value == "2026/04/20 21:46:46"
-    assert sheet["E2"].value == "2026/04/20 21:56:39"
-    assert sheet["F2"].value == "支付点错了，开年费，点成月费了"
-    assert sheet["G2"].value == "全额退款"
-    assert sheet["J2"].value == "全额退款（原路返回）"
+    assert sheet["E2"].value == "其他问题"
+    assert sheet["F2"].value == "2026/04/20 21:56:39"
+    assert sheet["G2"].value == "支付点错了，开年费，点成月费了"
+    assert sheet["H2"].value == "全额退款"
+    assert sheet["K2"].value == "全额退款（原路返回）"
 
     with ZipFile(result) as zf:
         names = set(zf.namelist())

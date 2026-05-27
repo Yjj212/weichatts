@@ -4,6 +4,14 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 
+DEFAULT_ENABLED_EXPORT_FIELDS = {
+    "transaction_amount",
+    "transaction_time",
+    "consultation_reason",
+    "inquiry_time",
+    "problem_description",
+}
+
 
 @dataclass(slots=True)
 class Rect:
@@ -32,6 +40,11 @@ class AppConfig:
     chat_scroll_clicks: int = 2
     list_page_scroll_ratio: float = 0.85
     capture_overlap_threshold: float = 0.98
+    enabled_export_fields: set[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.enabled_export_fields is None:
+            self.enabled_export_fields = set(DEFAULT_ENABLED_EXPORT_FIELDS)
 
 
 def config_path(base_dir: Path) -> Path:
@@ -44,6 +57,9 @@ def load_config(base_dir: Path) -> AppConfig:
         return AppConfig()
 
     data = json.loads(path.read_text(encoding="utf-8"))
+    enabled_export_fields = data.get("enabled_export_fields")
+    if enabled_export_fields is None:
+        enabled_export_fields = DEFAULT_ENABLED_EXPORT_FIELDS
     return AppConfig(
         window_title_hint=data.get("window_title_hint", "微信"),
         output_dir=data.get("output_dir", "image"),
@@ -59,12 +75,14 @@ def load_config(base_dir: Path) -> AppConfig:
         chat_scroll_clicks=int(data.get("chat_scroll_clicks", 2)),
         list_page_scroll_ratio=float(data.get("list_page_scroll_ratio", 0.85)),
         capture_overlap_threshold=float(data.get("capture_overlap_threshold", 0.98)),
+        enabled_export_fields=set(enabled_export_fields),
     )
 
 
 def save_config(base_dir: Path, config: AppConfig) -> None:
     path = config_path(base_dir)
     payload = asdict(config)
+    payload["enabled_export_fields"] = sorted(config.enabled_export_fields or [])
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
